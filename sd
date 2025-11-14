@@ -294,4 +294,4 @@ game:BindToClose(function()
 	saveVisited()
 end)
 
-print("Scanner Brainrot v2.0 lancé avec persistance et retry intelligent.")
+print("Scanner Brainrot v2.0 lancé avec persistance et retry intelligent.") faut que sa soit plus lent genre le debut du sceript quans je lexecute faut que sa commence 10 sec apres le temmpsq que je charge 
