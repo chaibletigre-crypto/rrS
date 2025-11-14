@@ -1,16 +1,14 @@
 -- ╔═══════════════════════════════════════════════════════════╗
--- ║            BRAINROT SCANNER + SMART SERVER HOP            ║
--- ║                Version: 2.0 (Robuste & Persistante)       ║
+-- ║       BRAINROT SCANNER v2.2 – COMPATIBLE DELTA & WAVE      ║
+-- ║               (request + fallback + robuste)              ║
 -- ╚═══════════════════════════════════════════════════════════╝
 
 local Workspace = game:GetService("Workspace")
 local TeleportService = game:GetService("TeleportService")
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
 
 -- ============================= CONFIG =============================
-local DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1433201186541928691/TIBPT4rx_ktXunxR8xXoSCJFMNwmOQ_a7Fke3PEeUUUj-VILhriRZvGMb5KfxORU9qsB"
 local REPLIT_SERVER = "https://cbb52fb2-f3e0-4691-a5e1-295c6cf29958-00-3ewo9jh2rrnsb.janeway.replit.dev:3000"
 local PLACE_ID = 109983668079237
 
@@ -26,40 +24,66 @@ local visitedServers = {}
 local scanCount = 0
 local found, totalFound = {}, 0
 
--- ============================= HTTP SETUP =============================
-local function getHttpFunction()
-	return (syn and syn.request)
-		or (http and http.request)
-		or (http_request)
-		or (request)
-		or (fluxus and fluxus.request)
-		or nil
+-- ============================= HTTP SETUP (DELTA & WAVE) =============================
+local request = (syn and syn.request) or (http and http.request) or (http_request) or request or (fluxus and fluxus.request)
+
+-- Fonction HttpGet compatible DELTA
+local function HttpGet(url)
+	if not request then return nil end
+	local success, response = pcall(function()
+		return request({
+			Url = url,
+			Method = "GET"
+		})
+	end)
+	if success and response.StatusCode == 200 then
+		return response.Body
+	else
+		warn("HttpGet échoué : " .. tostring(response.StatusCode))
+		return nil
+	end
 end
 
-local httpRequest = getHttpFunction()
-if not httpRequest then
-	warn("Aucune fonction HTTP compatible trouvée.")
+-- Fonction POST pour Replit
+local function HttpPost(url, data)
+	if not request then return false end
+	local success, response = pcall(function()
+		return request({
+			Url = url,
+			Method = "POST",
+			Headers = {
+				["Content-Type"] = "application/json",
+				["User-Agent"] = "Roblox/BrainrotScanner"
+			},
+			Body = data
+		})
+	end)
+	return success and response.StatusCode == 200
 end
 
--- ============================= PERSISTENCE =============================
+if not request then
+	warn("AUCUNE FONCTION HTTP DISPONIBLE (request, syn, etc.)")
+end
+
+-- ============================= PERSISTENCE (OPTIONNELLE) =============================
+local hasFileSystem = isfile and readfile and writefile
+
 local function loadVisited()
+	if not hasFileSystem or not isfile(VISITED_KEY) then return end
 	pcall(function()
-		if readfile and isfile and isfile(VISITED_KEY) then
-			local data = readfile(VISITED_KEY)
-			local decoded = HttpService:JSONDecode(data)
-			if typeof(decoded) == "table" then
-				visitedServers = decoded
-				print("Chargé " .. #visitedServers .. " serveurs visités.")
-			end
+		local data = readfile(VISITED_KEY)
+		local decoded = HttpService:JSONDecode(data)
+		if typeof(decoded) == "table" then
+			visitedServers = decoded
+			print("Chargé " .. #visitedServers .. " serveurs visités.")
 		end
 	end)
 end
 
 local function saveVisited()
+	if not hasFileSystem then return end
 	pcall(function()
-		if writefile then
-			writefile(VISITED_KEY, HttpService:JSONEncode(visitedServers))
-		end
+		writefile(VISITED_KEY, HttpService:JSONEncode(visitedServers))
 	end)
 end
 
@@ -132,23 +156,15 @@ local function sendToServer(name, money)
 	local jobId = game.JobId
 	local players = #Players:GetPlayers() .. "/" .. Players.MaxPlayers
 
-	if httpRequest then
+	if request then
 		pcall(function()
-			httpRequest({
-				Url = REPLIT_SERVER .. "/api/server",
-				Method = "POST",
-				Headers = {
-					["Content-Type"] = "application/json",
-					["User-Agent"] = "Roblox/BrainrotScanner"
-				},
-				Body = HttpService:JSONEncode({
-					name = name,
-					job_id = jobId,
-					money_per_sec = money,
-					players = players,
-					timestamp = os.time()
-				})
-			})
+			HttpPost(REPLIT_SERVER .. "/api/server", HttpService:JSONEncode({
+				name = name,
+				job_id = jobId,
+				money_per_sec = money,
+				players = players,
+				timestamp = os.time()
+			}))
 		end)
 		print("Envoyé : " .. name .. " | " .. money .. "/sec | " .. players)
 	else
@@ -203,18 +219,15 @@ local function serverHop(force)
 	local servers = {}
 	local cursor = ""
 
-	-- Récupérer tous les serveurs valides
 	repeat
 		local url = "https://games.roblox.com/v1/games/" .. PLACE_ID .. "/servers/Public?sortOrder=Asc&limit=100"
 		if cursor ~= "" then url = url .. "&cursor=" .. cursor end
 
-		local success, response = pcall(function()
-			return game:HttpGet(url, true)
-		end)
+		local response = HttpGet(url)
+		if not response then break end
 
-		if not success then break end
-		local data = HttpService:JSONDecode(response)
-		if not data or not data.data then break end
+		local success, data = pcall(HttpService.JSONDecode, HttpService, response)
+		if not success or not data or not data.data then break end
 
 		for _, srv in pairs(data.data) do
 			if srv.playing > 0 and srv.playing < srv.maxPlayers
@@ -275,9 +288,13 @@ task.spawn(function()
 	serverHop(true)
 end)
 
--- ============================= MAIN LOOP =============================
+-- ============================= MAIN LOOP (DÉMARRE APRÈS 10s) =============================
+print("Scanner Brainrot v2.2 chargé (DELTA/WAVE). Démarrage dans 10 secondes...")
 task.spawn(function()
-	task.wait(5 + math.random(0, 3))
+	task.wait(10) -- DÉLAI 10 SECONDES
+
+	print("DÉMARRAGE DU SCANNER !")
+	task.wait(2 + math.random(0, 3))
 	scanBrainrots()
 
 	task.wait(2)
@@ -294,4 +311,4 @@ game:BindToClose(function()
 	saveVisited()
 end)
 
-print("Scanner Brainrot v2.0 lancé avec persistance et retry intelligent.") faut que sa soit plus lent genre le debut du sceript quans je lexecute faut que sa commence 10 sec apres le temmpsq que je charge 
+print("Scanner Brainrot v2.2 prêt. Compatible DELTA & WAVE.")
